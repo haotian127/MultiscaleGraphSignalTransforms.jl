@@ -233,6 +233,70 @@ function LPHGLET_dictionary(GP::GraphPart, G::GraphSig; gltype::Symbol = :L, ϵ:
 end
 
 
+function HGLET_DST4_Analysis(G::GraphSig, GP::GraphPart)
+    # Preliminaries
+    W = G.W
+    ind = GP.ind
+    rs = GP.rs
+    N = size(G.W,1)
+    jmax = size(rs,2)
+    fcols = size(G.f,2)
+    dmatrix = zeros(N,jmax,fcols)
+    dmatrix[:,jmax,:] = G.f[ind,:]
+
+    # Perform the HGLET analysis, i.e., generating the HGLET coefficients
+    for j = jmax-1:-1:1
+        regioncount = count(!iszero, rs[:,j]) - 1
+        for r = 1:regioncount
+            # the index that marks the start of the region
+            rs1 = rs[r,j]
+
+            # the index that is one after the end of the region
+            rs3 = rs[r+1,j]
+
+            # the number of points in the current region
+            n = rs3 - rs1
+
+            if n == 1
+                dmatrix[rs1,j,:] = G.f[ind[rs1],:]
+            elseif n > 1
+                indrs = ind[rs1:rs3-1]
+                W_temp = W[indrs,indrs]
+                D_temp = Diagonal(vec(sum(W_temp, dims = 1)))
+                L_temp = D_temp - W_temp
+                L_temp[1, 1] = 3  # DST type-IV (left: Dirichlet, right: Neumann)
+                v = svd(Matrix(L_temp)).U
+                v = v[:,end:-1:1] # reorder the ev's in the decreasing ew's
+
+                # standardize the eigenvector signs
+                for col = 1:n
+                    row = 1
+                    standardized = false
+                    while !standardized
+                        if v[row,col] > 10^3*eps()
+                            standardized = true
+                        elseif v[row,col] < -10^3*eps()
+                            v[:,col] = - v[:,col]
+                            standardized = true
+                        else
+                            row += 1
+                        end
+                    end
+                end
+
+                # obtain the expansion coeffcients
+                if gltype == :Lrw && normalizep
+                    dmatrix[rs1:rs3-1,j,:] = v'*(D.^0.5)*G.f[indrs,:]
+                else
+                    dmatrix[rs1:rs3-1,j,:] = v'*G.f[indrs,:]
+                end
+            end
+        end
+    end
+    return dmatrix
+end
+
+
 function HGLET_DST4_Synthesis(dvec::Matrix{Float64}, GP::GraphPart, BS::BasisSpec,
                          G::GraphSig)
     # Preliminaries
@@ -303,6 +367,53 @@ function HGLET_DST4_dictionary(GP::GraphPart, G::GraphSig)
 end
 
 
+function LPHGLET_DST4_Analysis(G::GraphSig, GP::GraphPart; ϵ::Float64 = 0.3)
+    # Preliminaries
+    W = G.W
+    inds = GP.inds
+    rs = GP.rs
+    N = size(W, 1)
+    jmax = size(rs, 2)
+    fcols = size(G.f, 2)
+    Uf = Matrix{Float64}(I, N, N)
+    used_node = Set()
+    dmatrixlH = zeros(N, jmax, fcols)
+
+    for j = 1:jmax
+        regioncount = count(!iszero, rs[:,j]) - 1
+        # assemble orthogonal folding operator at level j - 1
+        keep_folding!(Uf, used_node, W, GP; ϵ = ϵ, j = j - 1)
+        for r = 1:regioncount
+            # indices of current region
+            indr = rs[r, j]:(rs[r + 1, j] - 1)
+            # indices of current region's nodes
+            indrs = inds[indr, j]
+            # number of nodes in current region
+            n = length(indrs)
+
+            # compute the eigenvectors
+            W_temp = W[indrs,indrs]
+            D_temp = Diagonal(vec(sum(W_temp, dims = 1)))
+            L_temp = D_temp - W_temp
+            L_temp[1, 1] = 3  # DST type-IV (left: Dirichlet, right: Neumann)
+            v = svd(Matrix(L_temp)).U
+
+            # standardize the eigenvector signs
+            v = v[:,end:-1:1]
+            standardize_eigenvector_signs!(v)
+
+            # construct unfolding operator custom to current region
+            P = Uf[indrs, :]'
+            # obtain the expansion coefficients
+            dmatrixlH[indr, j, :] = (P * v)' * G.f
+        end
+    end
+
+    return dmatrixlH
+
+end
+
+
 function LPHGLET_DST4_Synthesis(dvec::Matrix{Float64}, GP::GraphPart, BS::BasisSpec, G::GraphSig; ϵ::Float64 = 0.3)
     # Preliminaries
     W = G.W
@@ -336,7 +447,7 @@ function LPHGLET_DST4_Synthesis(dvec::Matrix{Float64}, GP::GraphPart, BS::BasisS
                 W_temp = W[indrs,indrs]
                 D_temp = Diagonal(vec(sum(W_temp, dims = 1)))
                 L_temp = D_temp - W_temp
-                L_temp[1, 1] = 3 # DST type-IV (left: Dirichlet, right: Neumann)
+                L_temp[1, 1] = 3  # DST type-IV (left: Dirichlet, right: Neumann)
                 v = svd(Matrix(L_temp)).U
                 v = v[:,end:-1:1]
 
@@ -359,6 +470,7 @@ function LPHGLET_DST4_Synthesis(dvec::Matrix{Float64}, GP::GraphPart, BS::BasisS
 
     return f, GS
 end
+
 
 function LPHGLET_DST4_dictionary(GP::GraphPart, G::GraphSig; ϵ::Float64 = 0.3)
     N = size(G.W, 1)
