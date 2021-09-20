@@ -231,3 +231,142 @@ function LPHGLET_dictionary(GP::GraphPart, G::GraphSig; gltype::Symbol = :L, ϵ:
     end
     return dictionary
 end
+
+
+function HGLET_DST4_Synthesis(dvec::Matrix{Float64}, GP::GraphPart, BS::BasisSpec,
+                         G::GraphSig)
+    # Preliminaries
+    W = G.W
+    jmax = size(GP.rs,2)
+
+    # Fill in the appropriate entries of dmatrix
+    dmatrix = dvec2dmatrix(dvec,GP,BS)
+    f = dmatrix[:,jmax,:]
+
+    # Perform the signal synthesis from the given coefficients
+    for j = jmax:-1:1
+        regioncount = count(!iszero, GP.rs[:,j]) - 1
+        for r = 1:regioncount
+            # the index that marks the start of the region
+            rs1 = GP.rs[r,j]
+
+            # the index that is one after the end of the region
+            rs3 = GP.rs[r+1,j]
+
+            # the number of points in the current region
+            n = rs3 - rs1
+
+            # only proceed forward if coefficients do not exist
+            if (j == jmax || count(!iszero, dmatrix[rs1:rs3-1,j+1,:]) == 0) && count(!iszero, dmatrix[rs1:rs3-1,j,:]) > 0
+
+                if n == 1
+                    f[rs1,:] = dmatrix[rs1,j,:]
+                elseif n > 1
+                    indrs = GP.ind[rs1:rs3-1]
+                    W_temp = W[indrs,indrs]
+                    D_temp = Diagonal(vec(sum(W_temp, dims = 1)))
+                    L_temp = D_temp - W_temp
+                    L_temp[1, 1] = 3  # DST type-IV (left: Dirichlet, right: Neumann)
+                    v = svd(Matrix(L_temp)).U
+                    v = v[:,end:-1:1] # reorder the ev's in the decreasing ew's
+
+                    # standardize the eigenvector signs
+                    standardize_eigenvector_signs!(v)
+
+                    # reconstruct the signal
+                    f[rs1:rs3-1,:] = v*dmatrix[rs1:rs3-1,j,:]
+                end
+            end
+        end
+    end
+
+    # put the reconstructed values in the correct order
+    f[GP.ind,:] = f
+
+    # creat a GraphSig object with the reconstructed data
+    GS = deepcopy(G)
+    replace_data!(GS,f)
+
+    return f, GS
+end
+
+
+function HGLET_DST4_dictionary(GP::GraphPart, G::GraphSig)
+    N = size(G.W, 1)
+    jmax = size(GP.rs, 2)
+    dictionary = zeros(N, jmax, N)
+    for j = 1:jmax
+        BS = BasisSpec(collect(enumerate(j * ones(Int, N))))
+        dictionary[:, j, :] = HGLET_DST4_Synthesis(Matrix{Float64}(I, N, N), GP, BS, G)[1]'
+    end
+    return dictionary
+end
+
+
+function LPHGLET_DST4_Synthesis(dvec::Matrix{Float64}, GP::GraphPart, BS::BasisSpec, G::GraphSig; ϵ::Float64 = 0.3)
+    # Preliminaries
+    W = G.W
+    inds = GP.inds
+    rs = GP.rs
+    N = size(W, 1)
+    jmax = size(rs, 2)
+    Uf = Matrix{Float64}(I, N, N)
+    used_node = Set()
+
+    # fill in the appropriate entries of dmatrix
+    dmatrix = dvec2dmatrix(dvec, GP, BS)
+    f = zeros(size(dmatrix[:, jmax, :]))
+
+    # Perform the synthesis transform
+    for j = 1:jmax
+        regioncount = count(!iszero, rs[:,j]) - 1
+        # assemble orthogonal folding operator at level j - 1
+        MultiscaleGraphSignalTransforms.keep_folding!(Uf, used_node, W, GP; ϵ = ϵ, j = j - 1)
+        for r = 1:regioncount
+            # indices of current region
+            indr = rs[r, j]:(rs[r + 1, j] - 1)
+            # indices of current region's nodes
+            indrs = inds[indr, j]
+            # number of nodes in current region
+            n = length(indrs)
+
+            # only proceed forward if coefficients do not exist
+            if (j == jmax || count(!iszero, dmatrix[indr, j + 1, :]) == 0) && count(!iszero, dmatrix[indr, j, :]) > 0
+                # compute the eigenvectors
+                W_temp = W[indrs,indrs]
+                D_temp = Diagonal(vec(sum(W_temp, dims = 1)))
+                L_temp = D_temp - W_temp
+                L_temp[1, 1] = 3 # DST type-IV (left: Dirichlet, right: Neumann)
+                v = svd(Matrix(L_temp)).U
+                v = v[:,end:-1:1]
+
+                # standardize the eigenvector signs
+                standardize_eigenvector_signs!(v)
+
+                # construct unfolder operator custom to current region
+                P = Uf[indrs, :]'
+
+                # reconstruct the signal
+                f += (P * v) * dmatrix[indr, j, :]
+
+            end
+        end
+    end
+
+    # creat a GraphSig object with the reconstructed data
+    GS = deepcopy(G)
+    replace_data!(GS, f)
+
+    return f, GS
+end
+
+function LPHGLET_DST4_dictionary(GP::GraphPart, G::GraphSig; ϵ::Float64 = 0.3)
+    N = size(G.W, 1)
+    jmax = size(GP.rs, 2)
+    dictionary = zeros(N, jmax, N)
+    for j = 1:jmax
+        BS = BasisSpec(collect(enumerate(j * ones(Int, N))))
+        dictionary[:, j, :] = LPHGLET_DST4_Synthesis(Matrix{Float64}(I, N, N), GP, BS, G; ϵ = ϵ)[1]'
+    end
+    return dictionary
+end
