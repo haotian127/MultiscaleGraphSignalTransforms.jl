@@ -64,5 +64,6 @@ export nat_spec_filter, ngwf_all_vectors, rngwf_all_vectors, ngwf_vector, frame_
 export scatter_gplot, scatter_gplot!, stem, stem!
 export standardize_eigenvectors!, spike, characteristic, χ, sort_wavelets, transform2D
 export getall_expansioncoeffs, approx_error_plot, getall_expansioncoeffs2, approx_error_plot2
+export get_wavelet_basis
 
 end
