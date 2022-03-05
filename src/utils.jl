@@ -498,3 +498,48 @@ function mgslp(A::Matrix{Float64}; tol::Float64 = 1e-12, p::Float64 = 1.0)
     end
     return Q, complement_dim
 end
+
+
+function get_wavelet_basis_levlist(GP; J=size(GP.rs, 2))
+    if J > size(GP.rs, 2) || J < 1
+        error("J should be inside the range of [1, ", size(GP.rs, 2), "].")
+    end
+    N = size(GP.rs, 1) - 1 # number of graph nodes
+    levlist = J * ones(Int, N)
+    # explore all possible basis
+    for j = (J - 1):-1:1
+        regioncount = count(!iszero, GP.rs[:, j]) - 1
+        for r = 2:regioncount
+            indr = GP.rs[r, j]:(GP.rs[r + 1, j]-1)
+            levlist[indr] .= j
+        end
+    end
+    return levlist
+end
+
+function generatebasis(DICT, levlist)
+    N = size(DICT, 3)
+    basis_vectors = zeros(N, N)
+    for (i, j) in enumerate(levlist)
+        basis_vectors[:, i] = DICT[i, j, :]
+    end
+    return basis_vectors
+end
+
+"""
+    get_wavelet_basis(DICT, GP; J=size(GP.rs, 2))
+
+get wavelet basis from dictionary.
+
+# Input Arguments
+- `DICT::Array{Float64, 3}`: NGWP dictionary.
+- `GP`: a GraphPart object for the dual graph.
+- `J`: level (starting index=1); default = jmax.
+
+# Output Argument
+- `W::Matrix{Float64}`: a matrix, whose columns are wavelet basis vectors.
+"""
+function get_wavelet_basis(DICT, GP; J=size(GP.rs, 2))
+    levlist = get_wavelet_basis_levlist(GP; J=J)
+    return generatebasis(DICT, levlist)
+end
